@@ -47,6 +47,10 @@ func main() {
 		feed := vdv452parser.NewVDV452()
 		feed.Parse(path)
 
+		for _, l := range feed.Lines {
+			fmt.Println(l)
+		}
+
 		fmt.Fprintf(os.Stdout, "done.\n")
 	}
 }
