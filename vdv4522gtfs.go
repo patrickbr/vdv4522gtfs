@@ -9,8 +9,14 @@ package main
 
 import (
 	"fmt"
+	"github.com/patrickbr/gtfsparser"
+	"github.com/patrickbr/gtfsparser/gtfs"
+	"github.com/patrickbr/gtfswriter"
 	flag "github.com/spf13/pflag"
+	mail "net/mail"
+	url "net/url"
 	"os"
+	"path"
 	"patrickbrosi.de/vdv452parser"
 	"patrickbrosi.de/vdv452parser/vdv452"
 )
@@ -22,6 +28,7 @@ func main() {
 	}
 
 	help := flag.BoolP("help", "?", false, "this message")
+	outputPath := flag.StringP("output", "o", "gtfs-out", "gtfs output directory or zip file (must end with .zip)")
 
 	flag.Parse()
 
@@ -43,35 +50,131 @@ func main() {
 		}
 	}()
 
-	for _, path := range vdv452paths {
+	gtfsfeed := gtfsparser.NewFeed()
+
+	feedinf := new(gtfs.FeedInfo)
+	feedinf.Publisher_name = "gtfs.de"
+	u, _ := url.ParseRequestURI("https://gtfs.de")
+	feedinf.Publisher_url = u
+	feedinf.Lang = "en"
+	mail, _ := mail.ParseAddress("info@gtfs.de")
+	feedinf.Contact_email = mail
+	feedinf.Contact_url = u
+
+	for _, ipath := range vdv452paths {
 		fmt.Fprintf(os.Stdout, "Parsing VDV452 in '%s' ...", vdv452paths)
 		feed := vdv452parser.NewVDV452()
-		feed.Parse(path)
+		feed.Parse(ipath)
 
-		// for _, l := range feed.Lines {
-		// fmt.Fprintf(os.Stdout, "== Line %s (%s)== \n", l.RouteAbbr, l.LineAbbr)
-		// for _, s := range l.Sequence {
-		// if stop, ok := feed.Stops[uint64(s.PointType)*7000000+uint64(s.PointNo)]; ok {
-		// fmt.Fprintf(os.Stdout, "   Point %d | %d (%s)\n", s.PointType, s.PointNo, stop.Stop_Desc)
-		// } else {
-		// panic(fmt.Errorf("Stop not found: %d | %d", s.PointType, s.PointNo))
-		// }
-		// }
-		// }
+		// collect calendar_dates.txt
+		for _, dt := range feed.DayTypes {
+			serviceid := fmt.Sprintf("%d", dt.DayTypeNo)
+			service := new(gtfs.Service)
+			service.Id = serviceid
+			service.Daymap = [7]bool{false, false, false, false, false, false, false}
+			service.Start_date = gtfs.Date{-1, -1, -1}
+			service.End_date = gtfs.Date{-1, -1, -1}
+			service.Exceptions = make(map[gtfs.Date]int8)
+			gtfsfeed.Services[serviceid] = service
+
+			for date, _ := range dt.OperatingDays {
+				year := date / 10000
+				month := date % 10000 / 100
+				day := date % 10000 % 100
+				service.Exceptions[gtfs.Date{int8(day), int8(month), int16(year)}] = int8(1)
+			}
+		}
+
+		// collect stops.txt
+		for sid, s := range feed.Stops {
+			stop := new(gtfs.Stop)
+			stopid := fmt.Sprintf("%d", sid)
+			stop.Id = stopid
+			stop.Name = s.Stop_Desc
+			stop.Has_LatLon = true
+			stop.Lat = s.Latitude
+			stop.Lon = s.Longitude
+			stop.Code = s.Stop_Abbr
+			gtfsfeed.Stops[stopid] = stop
+		}
+
+		// collect agencies.txt
+		for _, o := range feed.OperatingDepartments {
+			agency := new(gtfs.Agency)
+			agency.Id = fmt.Sprintf("%d", o.OpDepNo)
+			agency.Name = o.OpDepDesc
+			tz, _ := gtfs.NewTimezone("Asia/Dubai")
+			agency.Timezone = tz
+			lan, _ := gtfs.NewLanguageISO6391("en")
+			agency.Lang = lan
+			url, _ := url.ParseRequestURI("https://www.gtfs.de")
+			agency.Url = url
+			gtfsfeed.Agencies[agency.Id] = agency
+		}
+
+		// collect routes.txt
+		for lid, l := range feed.Lines {
+			route := new(gtfs.Route)
+			route.Id = lid
+			route.Short_name = l.LineAbbr
+			route.Long_name = l.LineDesc
+			route.Sort_order = -1
+			gtfsfeed.Routes[route.Id] = route
+
+			if _, ok := feed.OperatingDepartments[uint64(l.OpDepNo)]; ok {
+				route.Agency = gtfsfeed.Agencies[fmt.Sprintf("%d", l.OpDepNo)]
+			} else {
+				panic(fmt.Errorf("Operating department not found: %d", l.OpDepNo))
+			}
+		}
 
 		for _, j := range feed.Journeys {
+			if j.JourneyType != 1 {
+				continue
+			}
 			lineId := fmt.Sprintf("%06d", j.LineNo) + j.RouteAbbr
 			journeyDepTime := j.DepartureTime
 			l := feed.Lines[lineId]
 			if len(l.Sequence) == 0 {
 				continue
 			}
+			// dest := feed.Destinations[uint64(l.Sequence[0].DestNo)]
+			// fmt.Fprintf(os.Stdout, "== Trip %d to '%s'== \n", j.JourneyNo)
+
+			trip := new(gtfs.Trip)
+			tripid := fmt.Sprintf("%d", j.JourneyNo)
+			gtfsfeed.Trips[tripid] = trip
+			trip.Id = tripid
+			trip.Route = gtfsfeed.Routes[lineId]
+			trip.Service = gtfsfeed.Services[fmt.Sprintf("%d", j.DayTypeNo)]
+			trip.Direction_id = int8(l.Direction - 1)
+			trip.Block_id = fmt.Sprintf("%d", j.BlockNo)
+			if j.TrainNo > 0 {
+				trip.Short_name = fmt.Sprintf("%d", j.TrainNo)
+			} else {
+				trip.Short_name = l.LineAbbr
+			}
+
+			if block, ok := feed.Blocks[uint64(j.DayTypeNo*1000+j.BlockNo)]; ok {
+				veh := feed.VehicleTypes[uint64(block.VhTypeNo)]
+				if veh.VhTypeSpecSeat > 0 {
+					trip.Wheelchair_accessible = 1
+				}
+			} else {
+				panic(fmt.Errorf("Block not found: %d | %d", j.DayTypeNo, j.BlockNo))
+			}
+
 			var prevStop *vdv452.Stop
 			prevTime := 0
-			// dest := feed.Destinations[uint64(l.Sequence[0].DestNo)]
-			fmt.Fprintf(os.Stdout, "== Trip %d to '%s'== \n", j.JourneyNo)
+			prevHs := ""
+
 			for _, s := range l.Sequence {
+				// if s.Productive == 0 {
+				// TODO
+				// continue
+				// }
 				if stop, ok := feed.Stops[uint64(s.PointType)*7000000+uint64(s.PointNo)]; ok {
+					stopid := fmt.Sprintf("%d", uint64(s.PointType)*7000000+uint64(s.PointNo))
 					arrTime := 0
 					depTime := 0
 					if prevStop == nil {
@@ -81,17 +184,100 @@ func main() {
 
 						tGroup := uint64(l.OpDepNo)*1000000000 + uint64(j.TimingGroupNo)
 						ft := uint64(prevStop.Point_Type)*100000000000000 + uint64(prevStop.Point_No)*100000000 + uint64(stop.Point_Type)*1000000 + uint64(stop.Point_No)
+
+						tGroupWait := uint64(j.TimingGroupNo)
+						ftWait := uint64(stop.Point_Type)*1000000 + uint64(stop.Point_No)
+
 						travelTime := feed.TravelTimes[tGroup][ft]
+						waitTime := feed.WaitTimes[tGroupWait][ftWait]
+
 						arrTime = prevTime + travelTime
-						depTime = arrTime
+						depTime = arrTime + waitTime
 					}
-					fmt.Fprintf(os.Stdout, "   Point %d | %d (%s) %d:%d:%d    %d:%d:%d\n", s.PointType, s.PointNo, stop.Stop_Desc, arrTime/3600, arrTime%3600/60, arrTime%3600%60, depTime/3600, depTime%3600/60, depTime%3600%60)
+
+					puType := int8(0)
+					doType := int8(0)
+
+					if s.RequestStop {
+						puType = 2
+					}
+
+					if s.NoBoarding {
+						puType = 1
+					}
+
+					if s.NoAlighting {
+						doType = 1
+					}
+
+					headsign := ""
+
+					if dest, ok := feed.Destinations[uint64(s.DestNo)]; ok {
+						headsign = dest.DestFrontText
+					}
+
+					if len(headsign) > 0 {
+						prevHs = headsign
+					} else if len(prevHs) > 0 {
+						headsign = prevHs
+					}
+
+					if (arrTime % 3600 % 60) >= 30 {
+						arrTime = arrTime + (60 - (arrTime % 3600 % 60))
+					} else {
+						arrTime = arrTime - (arrTime % 3600 % 60)
+					}
+
+					if (depTime % 3600 % 60) >= 30 {
+						depTime = depTime + (60 - (depTime % 3600 % 60))
+					} else {
+						depTime = depTime - (depTime % 3600 % 60)
+					}
+
+					arrT := gtfs.Time{int8(arrTime / 3600), int8(arrTime % 3600 / 60), int8(arrTime % 3600 % 60)}
+					depT := gtfs.Time{int8(depTime / 3600), int8(depTime % 3600 / 60), int8(depTime % 3600 % 60)}
+
+					trip.StopTimes = append(trip.StopTimes, gtfs.StopTime{arrT, depT, gtfsfeed.Stops[stopid], s.SequenceNo, headsign, puType, doType, 0, true, false})
+
+					// type StopTime struct {
+					// Arrival_time        Time
+					// Departure_time      Time
+					// Stop                *Stop
+					// Sequence            int
+					// Headsign            string
+					// Pickup_type         int8
+					// Drop_off_type       int8
+					// Shape_dist_traveled float32
+					// Timepoint           bool
+					// Has_dist            bool
+					// }
+
+					// fmt.Fprintf(os.Stdout, "   Point %d | %d (%s) %d:%d:%d    %d:%d:%d\n", s.PointType, s.PointNo, stop.Stop_Desc, arrTime/3600, arrTime%3600/60, arrTime%3600%60, depTime/3600, depTime%3600/60, depTime%3600%60)
 					prevStop = stop
 					prevTime = depTime
 				} else {
 					panic(fmt.Errorf("Stop not found: %d | %d", s.PointType, s.PointNo))
 				}
 			}
+		}
+
+		fmt.Fprintf(os.Stdout, "Outputting GTFS feed to '%s'...", *outputPath)
+
+		if _, err := os.Stat(*outputPath); os.IsNotExist(err) {
+			if path.Ext(*outputPath) == ".zip" {
+				os.Create(*outputPath)
+			} else {
+				os.Mkdir(*outputPath, os.ModePerm)
+			}
+		}
+
+		w := gtfswriter.Writer{ZipCompressionLevel: 9, Sorted: true}
+		e := w.Write(gtfsfeed, *outputPath)
+
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "\nError while writing GTFS feed in '%s':\n ", *outputPath)
+			fmt.Fprintln(os.Stderr, e.Error())
+			os.Exit(1)
 		}
 
 		fmt.Fprintf(os.Stdout, "done.\n")
