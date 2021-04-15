@@ -62,7 +62,7 @@ func main() {
 	feedinf.Contact_url = u
 
 	for _, ipath := range vdv452paths {
-		fmt.Fprintf(os.Stdout, "Parsing VDV452 in '%s' ...", vdv452paths)
+		fmt.Fprintf(os.Stdout, "Parsing VDV452 in '%s' ...", ipath)
 		feed := vdv452parser.NewVDV452()
 		feed.Parse(ipath)
 
@@ -74,14 +74,14 @@ func main() {
 			service.Daymap = [7]bool{false, false, false, false, false, false, false}
 			service.Start_date = gtfs.Date{-1, -1, -1}
 			service.End_date = gtfs.Date{-1, -1, -1}
-			service.Exceptions = make(map[gtfs.Date]int8)
+			service.Exceptions = make(map[gtfs.Date]bool)
 			gtfsfeed.Services[serviceid] = service
 
 			for date, _ := range dt.OperatingDays {
 				year := date / 10000
 				month := date % 10000 / 100
 				day := date % 10000 % 100
-				service.Exceptions[gtfs.Date{int8(day), int8(month), int16(year)}] = int8(1)
+				service.Exceptions[gtfs.Date{int8(day), int8(month), int16(year)}] = true
 			}
 		}
 
@@ -243,20 +243,6 @@ func main() {
 
 					trip.StopTimes = append(trip.StopTimes, gtfs.StopTime{arrT, depT, gtfsfeed.Stops[stopid], s.SequenceNo, headsign, puType, doType, 0, true, false})
 
-					// type StopTime struct {
-					// Arrival_time        Time
-					// Departure_time      Time
-					// Stop                *Stop
-					// Sequence            int
-					// Headsign            string
-					// Pickup_type         int8
-					// Drop_off_type       int8
-					// Shape_dist_traveled float32
-					// Timepoint           bool
-					// Has_dist            bool
-					// }
-
-					// fmt.Fprintf(os.Stdout, "   Point %d | %d (%s) %d:%d:%d    %d:%d:%d\n", s.PointType, s.PointNo, stop.Stop_Desc, arrTime/3600, arrTime%3600/60, arrTime%3600%60, depTime/3600, depTime%3600/60, depTime%3600%60)
 					prevStop = stop
 					prevTime = depTime
 				} else {
@@ -265,6 +251,7 @@ func main() {
 			}
 		}
 
+		fmt.Fprintf(os.Stdout, " done.\n")
 		fmt.Fprintf(os.Stdout, "Outputting GTFS feed to '%s'...", *outputPath)
 
 		if _, err := os.Stat(*outputPath); os.IsNotExist(err) {
@@ -284,6 +271,6 @@ func main() {
 			os.Exit(1)
 		}
 
-		fmt.Fprintf(os.Stdout, "done.\n")
+		fmt.Fprintf(os.Stdout, " done.\n")
 	}
 }
