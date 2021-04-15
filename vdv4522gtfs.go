@@ -222,20 +222,24 @@ func main() {
 						headsign = prevHs
 					}
 
+					// times rounded to the nearest full minute
+					rArrTime := 0
+					rDepTime := 0
+
 					if (arrTime % 3600 % 60) >= 30 {
-						arrTime = arrTime + (60 - (arrTime % 3600 % 60))
+						rArrTime = arrTime + (60 - (arrTime % 3600 % 60))
 					} else {
-						arrTime = arrTime - (arrTime % 3600 % 60)
+						rArrTime = arrTime - (arrTime % 3600 % 60)
 					}
 
 					if (depTime % 3600 % 60) >= 30 {
-						depTime = depTime + (60 - (depTime % 3600 % 60))
+						rDepTime = depTime + (60 - (depTime % 3600 % 60))
 					} else {
-						depTime = depTime - (depTime % 3600 % 60)
+						rDepTime = depTime - (depTime % 3600 % 60)
 					}
 
-					arrT := gtfs.Time{int8(arrTime / 3600), int8(arrTime % 3600 / 60), int8(arrTime % 3600 % 60)}
-					depT := gtfs.Time{int8(depTime / 3600), int8(depTime % 3600 / 60), int8(depTime % 3600 % 60)}
+					arrT := gtfs.Time{int8(rArrTime / 3600), int8(rArrTime % 3600 / 60), int8(rArrTime % 3600 % 60)}
+					depT := gtfs.Time{int8(rDepTime / 3600), int8(rDepTime % 3600 / 60), int8(rDepTime % 3600 % 60)}
 
 					trip.StopTimes = append(trip.StopTimes, gtfs.StopTime{arrT, depT, gtfsfeed.Stops[stopid], s.SequenceNo, headsign, puType, doType, 0, true, false})
 
