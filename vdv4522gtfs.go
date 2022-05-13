@@ -88,6 +88,49 @@ func main() {
 			}
 		}
 
+		parentStops := make(map[uint][]uint64)
+
+		// collect parent stops
+		for sid, s := range feed.Stops {
+			if _, ok := parentStops[s.Stop_No]; !ok {
+				parentStops[s.Stop_No] = make([]uint64, 0)
+			}
+			parentStops[s.Stop_No] = append(parentStops[s.Stop_No], sid)
+		}
+
+		parentStopPointers := make(map[uint]*gtfs.Stop)
+
+		for sid, stops := range parentStops {
+			if len(stops) < 2 {
+				continue
+			}
+
+			stop := new(gtfs.Stop)
+			stop.Id = fmt.Sprintf("%d", sid)
+			stop.Name = feed.Stops[stops[0]].Stop_Desc
+			stop.Code = feed.Stops[stops[0]].Stop_Abbr
+			stop.Location_type = 1
+
+			lat := float32(0)
+			lon := float32(0)
+
+			for _, s := range stops {
+				if feed.Stops[s].Latitude != 0 {
+					lat += feed.Stops[s].Latitude
+					lon += feed.Stops[s].Longitude
+				}
+			}
+
+			lat = lat / float32(len(stops));
+			lon = lon / float32(len(stops));
+
+			stop.Lat =  lat
+			stop.Lon =  lon
+
+			gtfsfeed.Stops[stop.Id] = stop
+			parentStopPointers[sid] = stop
+		}
+
 		// collect stops.txt
 		for sid, s := range feed.Stops {
 			stop := new(gtfs.Stop)
@@ -97,6 +140,9 @@ func main() {
 			stop.Lat = s.Latitude
 			stop.Lon = s.Longitude
 			stop.Code = s.Stop_Abbr
+			if ps, ok := parentStopPointers[s.Stop_No]; ok {
+				stop.Parent_station = ps
+			}
 			gtfsfeed.Stops[stopid] = stop
 		}
 
@@ -105,7 +151,7 @@ func main() {
 			agency := new(gtfs.Agency)
 			agency.Id = fmt.Sprintf("%d", o.OpDepNo)
 			agency.Name = o.OpDepDesc
-			tz, _ := gtfs.NewTimezone("Asia/Dubai")
+			tz, _ := gtfs.NewTimezone("Europe/Berlin")
 			agency.Timezone = tz
 			lan, _ := gtfs.NewLanguageISO6391("en")
 			agency.Lang = lan
