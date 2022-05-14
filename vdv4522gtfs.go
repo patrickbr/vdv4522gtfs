@@ -29,8 +29,11 @@ func main() {
 	}
 
 	help := flag.BoolP("help", "?", false, "this message")
+	timezone := flag.StringP("timezone", "t", "Europe/Berlin", "timezone of output feed")
+	gtfsLang := flag.StringP("language", "l", "de", "language of output feed")
+	agencyDefUrl := flag.StringP("agency-url", "", "https://www.gtfs.de", "agency default URL")
+	divaProj := flag.StringP("diva-proj", "", "+proj=tmerc +lat_0=0 +lon_0=9 +k=1 +x_0=3500000 +y_0=0 +ellps=bessel +towgs84=584.8,67.0,400.3,0.105,0.013,-2.378,10.29 +units=m +no_defs", "projection used for DIVA POS_X and POS_Y in REC_FP, default is Gauss-Krüger Zone 3")
 	outputPath := flag.StringP("output", "o", "gtfs-out", "gtfs output directory or zip file (must end with .zip)")
-
 	flag.Parse()
 
 	if *help {
@@ -45,11 +48,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	// defer func() {
-	// if r := recover(); r != nil {
-	// fmt.Fprintln(os.Stderr, "Error:", r)
-	// }
-	// }()
+	gtfsTZ, _ := gtfs.NewTimezone(*timezone)
+
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintln(os.Stderr, "Error:", r)
+		}
+	}()
 
 	gtfsfeed := gtfsparser.NewFeed()
 
@@ -57,7 +62,7 @@ func main() {
 	feedinf.Publisher_name = "gtfs.de"
 	u, _ := url.ParseRequestURI("https://gtfs.de")
 	feedinf.Publisher_url = u
-	feedinf.Lang = "en"
+	feedinf.Lang = *gtfsLang
 	mail, _ := mail.ParseAddress("info@gtfs.de")
 	feedinf.Contact_email = mail
 	feedinf.Contact_url = u
@@ -66,7 +71,7 @@ func main() {
 
 	for _, ipath := range vdv452paths {
 		fmt.Fprintf(os.Stdout, "Parsing VDV452 in '%s' ...", ipath)
-		feed := vdv452parser.NewVDV452()
+		feed := vdv452parser.NewVDV452(*divaProj)
 		feed.Parse(ipath)
 
 		// collect calendar_dates.txt
@@ -110,6 +115,7 @@ func main() {
 			stop.Name = feed.Stops[stops[0]].Stop_Desc
 			stop.Code = feed.Stops[stops[0]].Stop_Abbr
 			stop.Location_type = 1
+			stop.Timezone, _ = gtfs.NewTimezone("")
 
 			lat := float32(0)
 			lon := float32(0)
@@ -140,6 +146,7 @@ func main() {
 			stop.Lat = s.Latitude
 			stop.Lon = s.Longitude
 			stop.Code = s.Stop_Abbr
+			stop.Timezone, _ = gtfs.NewTimezone("")
 			if ps, ok := parentStopPointers[s.Stop_No]; ok {
 				stop.Parent_station = ps
 			}
@@ -151,11 +158,10 @@ func main() {
 			agency := new(gtfs.Agency)
 			agency.Id = fmt.Sprintf("%d", o.OpDepNo)
 			agency.Name = o.OpDepDesc
-			tz, _ := gtfs.NewTimezone("Europe/Berlin")
-			agency.Timezone = tz
-			lan, _ := gtfs.NewLanguageISO6391("en")
+			agency.Timezone = gtfsTZ
+			lan, _ := gtfs.NewLanguageISO6391(*gtfsLang)
 			agency.Lang = lan
-			url, _ := url.ParseRequestURI("https://www.gtfs.de")
+			url, _ := url.ParseRequestURI(*agencyDefUrl)
 			agency.Url = url
 			gtfsfeed.Agencies[agency.Id] = agency
 		}
@@ -165,7 +171,8 @@ func main() {
 			route := new(gtfs.Route)
 			route.Id = lid
 			route.Short_name = l.LineAbbr
-			route.Long_name = l.LineDesc
+			route.Long_name = l.LineAbbr
+			route.Desc = l.LineDesc
 			route.Sort_order = -1
 			gtfsfeed.Routes[route.Id] = route
 
@@ -194,8 +201,6 @@ func main() {
 			if len(l.Sequence) == 0 {
 				continue
 			}
-			// dest := feed.Destinations[uint64(l.Sequence[0].DestNo)]
-			// fmt.Fprintf(os.Stdout, "== Trip %d to '%s'== \n", j.JourneyNo)
 
 			trip := new(gtfs.Trip)
 			tripid := fmt.Sprintf("%d", j.JourneyNo)
@@ -213,6 +218,7 @@ func main() {
 
 			if block, ok := feed.Blocks[uint64(j.DayTypeNo*1000+j.BlockNo)]; ok {
 				veh := feed.VehicleTypes[uint64(block.VhTypeNo)]
+				trip.Route.Type = int16(veh.GuessedGtfsType)
 				if veh.VhTypeSpecSeat > 0 {
 					trip.Wheelchair_accessible = 1
 				}
@@ -225,10 +231,9 @@ func main() {
 			prevHs := ""
 
 			for _, s := range l.Sequence {
-				// if s.Productive == 0 {
-				// TODO
-				// continue
-				// }
+				if !s.Productive {
+					continue
+				}
 				if stop, ok := feed.Stops[uint64(s.PointType)*7000000+uint64(s.PointNo)]; ok {
 					stopid := fmt.Sprintf("%d", uint64(s.PointType)*7000000+uint64(s.PointNo))
 					arrTime := 0
