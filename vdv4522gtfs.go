@@ -17,10 +17,33 @@ import (
 	mail "net/mail"
 	url "net/url"
 	"os"
+	"sort"
 	"path"
 	"patrickbrosi.de/vdv452parser"
 	"patrickbrosi.de/vdv452parser/vdv452"
 )
+
+var DEG_TO_RAD float64 = 0.017453292519943295769236907684886127134428718885417254560
+
+// Calculate the distance in meter between two lat,lng pairs
+func haversine(latA float64, lonA float64, latB float64, lonB float64) float64 {
+	latA = latA * DEG_TO_RAD
+	lonA = lonA * DEG_TO_RAD
+	latB = latB * DEG_TO_RAD
+	lonB = lonB * DEG_TO_RAD
+
+	dlat := latB - latA
+	dlon := lonB - lonA
+
+	sindlat := math.Sin(dlat / 2)
+	sindlon := math.Sin(dlon / 2)
+
+	a := sindlat*sindlat + math.Cos(latA)*math.Cos(latB)*sindlon*sindlon
+
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return c * 6378137.0
+}
 
 func main() {
 	flag.Usage = func() {
@@ -97,6 +120,9 @@ func main() {
 
 		// collect parent stops
 		for sid, s := range feed.Stops {
+			if s.Stop_Type > 3 {
+				continue
+			}
 			if _, ok := parentStops[s.Stop_No]; !ok {
 				parentStops[s.Stop_No] = make([]uint64, 0)
 			}
@@ -113,6 +139,9 @@ func main() {
 			stop := new(gtfs.Stop)
 			stop.Id = fmt.Sprintf("%d", sid)
 			stop.Name = feed.Stops[stops[0]].Stop_Desc
+			if len(stop.Name) == 0 {
+				stop.Name = feed.Stops[stops[0]].Point_Desc
+			}
 			stop.Code = feed.Stops[stops[0]].Stop_Abbr
 			stop.Location_type = 1
 			stop.Timezone, _ = gtfs.NewTimezone("")
@@ -130,8 +159,8 @@ func main() {
 			lat = lat / float32(len(stops));
 			lon = lon / float32(len(stops));
 
-			stop.Lat =  lat
-			stop.Lon =  lon
+			stop.Lat = lat
+			stop.Lon = lon
 
 			gtfsfeed.Stops[stop.Id] = stop
 			parentStopPointers[sid] = stop
@@ -139,10 +168,16 @@ func main() {
 
 		// collect stops.txt
 		for sid, s := range feed.Stops {
+			if s.Stop_Type > 3 {
+				continue
+			}
 			stop := new(gtfs.Stop)
 			stopid := fmt.Sprintf("%d", sid)
 			stop.Id = stopid
 			stop.Name = s.Stop_Desc
+			if len(stop.Name) == 0 {
+				stop.Name = s.Point_Desc
+			}
 			stop.Lat = s.Latitude
 			stop.Lon = s.Longitude
 			stop.Code = s.Stop_Abbr
@@ -183,6 +218,8 @@ func main() {
 			}
 		}
 
+		var emptyString = ""
+
 		for _, j := range feed.Journeys {
 			if j.JourneyType != 1 {
 				continue
@@ -206,6 +243,7 @@ func main() {
 			tripid := fmt.Sprintf("%d", j.JourneyNo)
 			gtfsfeed.Trips[tripid] = trip
 			trip.Id = tripid
+			trip.Headsign = &emptyString;
 			trip.Route = gtfsfeed.Routes[lineId]
 			trip.Service = gtfsfeed.Services[fmt.Sprintf("%d", j.DayTypeNo)]
 			trip.Direction_id = int8(l.Direction - 1)
@@ -230,6 +268,11 @@ func main() {
 			prevTime := 0
 			prevHs := ""
 
+			shape := new(gtfs.Shape)
+			shape.Id = fmt.Sprintf("%d", j.JourneyNo)
+			gtfsfeed.Shapes[shape.Id] = shape
+			trip.Shape = shape
+
 			for _, s := range l.Sequence {
 				if !s.Productive {
 					continue
@@ -238,6 +281,8 @@ func main() {
 					stopid := fmt.Sprintf("%d", uint64(s.PointType)*7000000+uint64(s.PointNo))
 					arrTime := 0
 					depTime := 0
+					dist := float32(0.0)
+
 					if prevStop == nil {
 						arrTime = journeyDepTime
 						depTime = arrTime
@@ -245,6 +290,25 @@ func main() {
 
 						tGroup := uint64(l.OpDepNo)*1000000000 + uint64(j.TimingGroupNo)
 						ft := uint64(prevStop.Point_Type)*100000000000000 + uint64(prevStop.Point_No)*100000000 + uint64(stop.Point_Type)*1000000 + uint64(stop.Point_No)
+
+						shapeId := uint64(l.OpDepNo) * 100000000000000000 + uint64(prevStop.Point_Type)*100000000000000 + uint64(prevStop.Point_No)*100000000 + uint64(stop.Point_Type)*1000000 + uint64(stop.Point_No)
+
+
+						if shp, ok := feed.Shapes[shapeId]; ok {
+							sort.Slice(shp, func(i, j int) bool {
+							   return shp[i].Order < shp[j].Order
+							})
+
+							for _, sp := range shp {
+								stop := feed.Stops[uint64(sp.PointType)*7000000+uint64(sp.PointNo)]
+
+								if len(shape.Points) > 0 {
+									dist = shape.Points[len(shape.Points)-1].Dist_traveled + float32(haversine(float64(shape.Points[len(shape.Points)-1].Lat), float64(shape.Points[len(shape.Points)-1].Lon), float64(stop.Latitude), float64(stop.Longitude)))
+								}
+
+								shape.Points = append(shape.Points, gtfs.ShapePoint{stop.Latitude, stop.Longitude, len(shape.Points) + 1, dist})
+							}
+						}
 
 						tGroupWait := uint64(j.TimingGroupNo)
 						ftWait := uint64(stop.Point_Type)*1000000 + uint64(stop.Point_No)
@@ -302,7 +366,7 @@ func main() {
 					arrT := gtfs.Time{int8(rArrTime / 3600), int8(rArrTime % 3600 / 60), int8(rArrTime % 3600 % 60)}
 					depT := gtfs.Time{int8(rDepTime / 3600), int8(rDepTime % 3600 / 60), int8(rDepTime % 3600 % 60)}
 
-					trip.StopTimes = append(trip.StopTimes, gtfs.StopTime{arrT, depT, gtfsfeed.Stops[stopid], s.SequenceNo, headsign, puType, doType, float32(math.NaN()), true})
+					trip.StopTimes = append(trip.StopTimes, gtfs.StopTime{arrT, depT, gtfsfeed.Stops[stopid], s.SequenceNo, &headsign, puType, doType, 1, 1, dist, true})
 
 					prevStop = stop
 					prevTime = depTime
