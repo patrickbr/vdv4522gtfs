@@ -100,10 +100,8 @@ func main() {
 		// collect calendar_dates.txt
 		for _, dt := range feed.DayTypes {
 			serviceid := fmt.Sprintf("%d", dt.DayTypeNo)
-			service := new(gtfs.Service)
+			service := gtfs.EmptyService()
 			service.SetId(serviceid)
-			service.SetRawDaymap(0)
-			service.SetExceptions(make(map[gtfs.Date]bool))
 			gtfsfeed.Services[serviceid] = service
 
 			for date, _ := range dt.OperatingDays {
@@ -247,21 +245,27 @@ func main() {
 			trip.Route = gtfsfeed.Routes[lineId]
 			trip.Service = gtfsfeed.Services[fmt.Sprintf("%d", j.DayTypeNo)]
 			trip.Direction_id = int8(l.Direction - 1)
-			trip.Block_id = fmt.Sprintf("%d", j.BlockNo)
+			a := fmt.Sprintf("%d", j.BlockNo)
+			trip.Block_id = &a
 			if j.TrainNo > 0 {
-				trip.Short_name = fmt.Sprintf("%d", j.TrainNo)
+				a := fmt.Sprintf("%d", j.TrainNo)
+				trip.Short_name = &a
 			} else {
-				trip.Short_name = l.LineAbbr
+				trip.Short_name = &l.LineAbbr
 			}
 
-			if block, ok := feed.Blocks[uint64(j.DayTypeNo*1000+j.BlockNo)]; ok {
-				veh := feed.VehicleTypes[uint64(block.VhTypeNo)]
-				trip.Route.Type = int16(veh.GuessedGtfsType)
-				if veh.VhTypeSpecSeat > 0 {
-					trip.Wheelchair_accessible = 1
+			if j.BlockNo >= 0 {
+				if block, ok := feed.Blocks[uint64(j.DayTypeNo*1000+j.BlockNo)]; ok {
+					veh := feed.VehicleTypes[uint64(block.VhTypeNo)]
+					trip.Route.Type = int16(veh.GuessedGtfsType)
+					if veh.VhTypeSpecSeat > 0 {
+						trip.Wheelchair_accessible = 1
+					}
+				} else {
+					panic(fmt.Errorf("Block not found: %d | %d", j.DayTypeNo, j.BlockNo))
 				}
 			} else {
-				panic(fmt.Errorf("Block not found: %d | %d", j.DayTypeNo, j.BlockNo))
+				fmt.Fprintf(os.Stderr, "Journey %d has no block (umlauf), cannot deduce route type, defaulting to 0 (tram)\n", j.JourneyNo)
 			}
 
 			var prevStop *vdv452.Stop
@@ -305,7 +309,7 @@ func main() {
 									dist = shape.Points[len(shape.Points)-1].Dist_traveled + float32(haversine(float64(shape.Points[len(shape.Points)-1].Lat), float64(shape.Points[len(shape.Points)-1].Lon), float64(stop.Latitude), float64(stop.Longitude)))
 								}
 
-								shape.Points = append(shape.Points, gtfs.ShapePoint{stop.Latitude, stop.Longitude, len(shape.Points) + 1, dist})
+								shape.Points = append(shape.Points, gtfs.ShapePoint{stop.Latitude, stop.Longitude, uint32(len(shape.Points) + 1), dist})
 							}
 						}
 
