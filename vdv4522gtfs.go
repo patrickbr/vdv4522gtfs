@@ -254,7 +254,7 @@ func main() {
 				trip.Short_name = &l.LineAbbr
 			}
 
-			if j.BlockNo >= 0 {
+			if j.BlockNo > 0 {
 				if block, ok := feed.Blocks[uint64(j.DayTypeNo*1000+j.BlockNo)]; ok {
 					veh := feed.VehicleTypes[uint64(block.VhTypeNo)]
 					trip.Route.Type = int16(veh.GuessedGtfsType)
