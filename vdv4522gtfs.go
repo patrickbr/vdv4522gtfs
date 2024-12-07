@@ -4,7 +4,6 @@
 //
 // Use of this source code is governed by a GPL v2
 // license that can be found in the LICENSE file
-
 package main
 
 import (
@@ -233,6 +232,10 @@ func main() {
 				continue
 			}
 
+			if len(l.RouteAbbr) == 0 {
+				fmt.Fprintln(os.Stderr, "WARN: route abbr of 0 length for line:", lineId)
+			}
+
 			if len(l.Sequence) == 0 {
 				continue
 			}
@@ -265,7 +268,7 @@ func main() {
 					panic(fmt.Errorf("Block not found: %d | %d", j.DayTypeNo, j.BlockNo))
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "Journey %d has no block (umlauf), cannot deduce route type, defaulting to 0 (tram)\n", j.JourneyNo)
+				// fmt.Fprintf(os.Stderr, "Journey %d has no block (umlauf), cannot deduce route type, defaulting to 0 (tram)\n", j.JourneyNo)
 			}
 
 			var prevStop *vdv452.Stop
@@ -318,6 +321,12 @@ func main() {
 
 						travelTime := feed.TravelTimes[tGroup][ft]
 						waitTime := feed.WaitTimes[tGroupWait][ftWait]
+
+						if journeyWaitTimes, ok := feed.JourneyWaitTimes[j.JourneyNo]; ok {
+							if journeyWaitTime, ok := journeyWaitTimes[ftWait]; ok {
+								waitTime  = journeyWaitTime
+							}
+						}
 
 						arrTime = prevTime + travelTime
 						depTime = arrTime + waitTime
