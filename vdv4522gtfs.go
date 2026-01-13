@@ -17,10 +17,9 @@ import (
 	url "net/url"
 	"os"
 	"path"
-	"patrickbrosi.de/vdv452parser"
-	"patrickbrosi.de/vdv452parser/vdv452"
+	"github.com/patrickbr/vdv452parser"
+	"github.com/patrickbr/vdv452parser/vdv452"
 	"sort"
-	"strconv"
 )
 
 var DEG_TO_RAD float64 = 0.017453292519943295769236907684886127134428718885417254560
@@ -55,7 +54,7 @@ func main() {
 	timezone := flag.StringP("timezone", "t", "Europe/Berlin", "timezone of output feed")
 	gtfsLang := flag.StringP("language", "l", "de", "language of output feed")
 	agencyDefUrl := flag.StringP("agency-url", "", "https://www.gtfs.de", "agency default URL")
-	defaultRouteType := flag.StringP("default-route-type", "", "0", "default route type")
+	defaultRouteType := flag.Int("default-route-type", 0, "default route type")
 	divaProj := flag.StringP("diva-proj", "", "+proj=tmerc +lat_0=0 +lon_0=9 +k=1 +x_0=3500000 +y_0=0 +ellps=bessel +towgs84=584.8,67.0,400.3,0.105,0.013,-2.378,10.29 +units=m +no_defs", "projection used for DIVA POS_X and POS_Y in REC_FP, default is Gauss-Krüger Zone 3")
 	outputPath := flag.StringP("output", "o", "gtfs-out", "gtfs output directory or zip file (must end with .zip)")
 	flag.Parse()
@@ -95,7 +94,7 @@ func main() {
 
 	for _, ipath := range vdv452paths {
 		fmt.Fprintf(os.Stdout, "Parsing VDV452 in '%s' ...", ipath)
-		feed := vdv452parser.NewVDV452(*divaProj)
+		feed := vdv452parser.NewVDV452(*divaProj, *defaultRouteType)
 		feed.Parse(ipath)
 
 		// collect calendar_dates.txt
@@ -207,10 +206,7 @@ func main() {
 			route.Short_name = l.LineAbbr
 			route.Long_name = l.LineAbbr
 			route.Desc = l.LineDesc
-			rType, err := strconv.Atoi(*defaultRouteType)
-			if err == nil {
-				route.Type = int16(rType)
-			}
+			route.Type = int16(*defaultRouteType)
 			route.Sort_order = -1
 			gtfsfeed.Routes[route.Id] = route
 
@@ -274,7 +270,7 @@ func main() {
 					panic(fmt.Errorf("Block not found: %d | %d", j.DayTypeNo, j.BlockNo))
 				}
 			} else {
-				fmt.Fprintf(os.Stderr, "Journey %d has no block (umlauf), cannot deduce route type, defaulting to %s (--default-route-type)\n", j.JourneyNo, *defaultRouteType)
+				fmt.Fprintf(os.Stderr, "Journey %d has no block (umlauf), cannot deduce route type, defaulting to %d (--default-route-type)\n", j.JourneyNo, *defaultRouteType)
 			}
 
 			var prevStop *vdv452.Stop
