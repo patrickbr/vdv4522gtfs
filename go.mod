@@ -1,6 +1,6 @@
 module github.com/patrickbr/vdv4522gtfs
 
-go 1.23.3
+go 1.23
 
 require (
 	github.com/patrickbr/gtfsparser v0.0.0-20251201215810-e1d245cf26b0
