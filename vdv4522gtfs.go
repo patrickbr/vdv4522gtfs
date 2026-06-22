@@ -377,8 +377,8 @@ func main() {
 						rDepTime = depTime - (depTime % 3600 % 60)
 					}
 
-					arrT := gtfs.Time{int8(rArrTime / 3600), int8(rArrTime % 3600 / 60), int8(rArrTime % 3600 % 60)}
-					depT := gtfs.Time{int8(rDepTime / 3600), int8(rDepTime % 3600 / 60), int8(rDepTime % 3600 % 60)}
+					arrT := gtfs.Time{int16(rArrTime / 3600), int8(rArrTime % 3600 / 60), int8(rArrTime % 3600 % 60)}
+					depT := gtfs.Time{int16(rDepTime / 3600), int8(rDepTime % 3600 / 60), int8(rDepTime % 3600 % 60)}
 
 					st := gtfs.StopTime{}
 					st.SetArrival_time(arrT)
